@@ -83,11 +83,17 @@ class Database:
     async def update_user_group(self, user_id: int, group: str) -> bool:
         """Update user's group"""
         try:
+            update_data = {
+                "group": group,
+                "is_guest": group is None
+            }
+            
             result = self.db.users.update_one(
                 {"user_id": user_id},
-                {"$set": {"group": group, "is_guest": False}}
+                {"$set": update_data},
+                upsert=True
             )
-            return result.modified_count > 0
+            return True
         except Exception as e:
             print(f"❌ Failed to update user group {user_id}: {e}")
             return False
@@ -139,6 +145,14 @@ class Database:
         except Exception as e:
             print(f"❌ Failed to get voice channel {channel_id}: {e}")
             return None
+    
+    async def get_all_voice_channels(self) -> List[Dict]:
+        """Get all active voice channels"""
+        try:
+            return list(self.db.voice_channels.find({}))
+        except Exception as e:
+            print(f"❌ Failed to get all voice channels: {e}")
+            return []
     
     async def remove_voice_channel(self, channel_id: int) -> bool:
         """Remove voice channel from database"""

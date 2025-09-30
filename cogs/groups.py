@@ -18,6 +18,29 @@ class GroupsCog(commands.Cog):
     async def on_ready(self):
         print("✅ Groups system loaded")
     
+    @commands.Cog.listener()
+    async def on_member_update(self, before, after):
+        """Auto-sync group roles with database"""
+        try:
+            # Check if group roles changed
+            before_group_roles = [role for role in before.roles if role.id in GROUP_ROLES.values()]
+            after_group_roles = [role for role in after.roles if role.id in GROUP_ROLES.values()]
+            
+            if before_group_roles != after_group_roles:
+                # Group role changed
+                if after_group_roles:
+                    # User got a group role
+                    new_group = next(name for name, role_id in GROUP_ROLES.items() 
+                                   if role_id == after_group_roles[0].id)
+                    await db.update_user_group(after.id, new_group)
+                    print(f"✅ Auto-synced {after.name} to group {new_group}")
+                else:
+                    # User lost group role
+                    await db.update_user_group(after.id, None)
+                    print(f"✅ Removed {after.name} from group")
+        except Exception as e:
+            print(f"❌ Error in auto-sync: {e}")
+    
     @commands.group(name="group", invoke_without_command=True)
     async def group_commands(self, ctx):
         """
@@ -29,10 +52,11 @@ class GroupsCog(commands.Cog):
             "**Доступні команди:**\n"
             "`!group info <назва>` - Інформація про групу\n"
             "`!group members <назва>` - Список учасників групи\n"
-            "`!group add @user <група>` - Додати користувача до групи (Старости/Заступники)\n"
+            "`!group transfer @user <група>` - Перенести користувача до іншої групи (Старости/Заступники)\n"
             "`!group remove @user` - Видалити користувача з групи (Старости/Заступники)\n"
             "`!group stats` - Статистика всіх груп (Старости/Заступники)\n"
-            "`!group list` - Список всіх груп"
+            "`!group list` - Список всіх груп\n"
+            "`!group sync` - Синхронізувати ролі з базою даних (Старости/Заступники)"
         )
         await ctx.send(embed=embed)
     
@@ -148,12 +172,12 @@ class GroupsCog(commands.Cog):
             print(f"❌ Error in group members: {e}")
             await ctx.send(embed=error_embed("Помилка", "Не вдалося отримати список учасників."))
     
-    @group_commands.command(name="add")
+    @group_commands.command(name="transfer")
     @commands.has_any_role(*MODERATION_ROLES)
-    async def group_add(self, ctx, member: nextcord.Member, group_name: str):
+    async def group_transfer(self, ctx, member: nextcord.Member, group_name: str):
         """
-        Add user to a group (Moderators only)
-        Usage: !group add @user <group_name>
+        Transfer user to another group (Moderators only)
+        Usage: !group transfer @user <group_name>
         """
         try:
             # Normalize group name
@@ -172,27 +196,32 @@ class GroupsCog(commands.Cog):
                 )
                 return
             
-            # Check if user already has a group
+            # Check if user already in this group
             user_data = await db.get_user(member.id)
-            if user_data and user_data.get('group'):
-                current_group = user_data['group']
+            if user_data and user_data.get('group') == group_name:
                 await ctx.send(
                     embed=warning_embed(
                         "Увага",
-                        f"Користувач {member.mention} вже має групу **{current_group}**!\n"
-                        f"Спочатку видаліть його з поточної групи командою `!group remove @user`"
+                        f"Користувач {member.mention} вже в групі **{group_name}**!"
                     )
                 )
                 return
             
-            # Get group role
-            group_role = ctx.guild.get_role(GROUP_ROLES[group_name])
-            if not group_role:
+            old_group = user_data.get('group') if user_data else None
+            
+            # Remove all group roles
+            for role_id in GROUP_ROLES.values():
+                role = ctx.guild.get_role(role_id)
+                if role and role in member.roles:
+                    await member.remove_roles(role, reason=f"Перенесення до {group_name} модератором: {ctx.author.name}")
+            
+            # Add new group role
+            new_group_role = ctx.guild.get_role(GROUP_ROLES[group_name])
+            if not new_group_role:
                 await ctx.send(embed=error_embed("Помилка", "Роль групи не знайдена!"))
                 return
             
-            # Add role
-            await member.add_roles(group_role, reason=f"Додано до групи модератором: {ctx.author.name}")
+            await member.add_roles(new_group_role, reason=f"Перенесено до групи модератором: {ctx.author.name}")
             
             # Remove guest role if exists
             guest_role = ctx.guild.get_role(ROLES['GUEST'])
@@ -205,10 +234,11 @@ class GroupsCog(commands.Cog):
             # Send DM to user
             try:
                 dm_embed = success_embed(
-                    "Вас додано до групи!",
+                    "Вас перенесено до іншої групи!",
                     f"**Сервер:** {ctx.guild.name}\n"
-                    f"**Група:** {group_name}\n"
-                    f"**Додав:** {ctx.author.name}"
+                    f"**Стара група:** {old_group or 'Немає'}\n"
+                    f"**Нова група:** {group_name}\n"
+                    f"**Модератор:** {ctx.author.name}"
                 )
                 await member.send(embed=dm_embed)
             except:
@@ -216,21 +246,23 @@ class GroupsCog(commands.Cog):
             
             # Confirm
             embed = success_embed(
-                "Користувача додано до групи",
+                "Користувача перенесено до групи",
                 f"**Користувач:** {member.mention}\n"
-                f"**Група:** {group_name}\n"
+                f"**Стара група:** {old_group or 'Немає'}\n"
+                f"**Нова група:** {group_name}\n"
                 f"**Модератор:** {ctx.author.mention}"
             )
             await ctx.send(embed=embed)
             
             # Log action
-            await db.log_action("group_add", member.id, ctx.author.id, {
-                "group": group_name
+            await db.log_action("group_transfer", member.id, ctx.author.id, {
+                "old_group": old_group,
+                "new_group": group_name
             })
             
         except Exception as e:
-            print(f"❌ Error in group add: {e}")
-            await ctx.send(embed=error_embed("Помилка", "Не вдалося додати користувача до групи."))
+            print(f"❌ Error in group transfer: {e}")
+            await ctx.send(embed=error_embed("Помилка", "Не вдалося перенести користувача до групи."))
     
     @group_commands.command(name="remove")
     @commands.has_any_role(*MODERATION_ROLES)
@@ -295,6 +327,48 @@ class GroupsCog(commands.Cog):
         except Exception as e:
             print(f"❌ Error in group remove: {e}")
             await ctx.send(embed=error_embed("Помилка", "Не вдалося видалити користувача з групи."))
+    
+    @group_commands.command(name="sync")
+    @commands.has_any_role(*MODERATION_ROLES)
+    async def group_sync(self, ctx):
+        """
+        Sync all group roles with database (Moderators only)
+        Usage: !group sync
+        """
+        try:
+            synced = 0
+            errors = 0
+            
+            # Go through all members with group roles
+            for group_name, role_id in GROUP_ROLES.items():
+                role = ctx.guild.get_role(role_id)
+                if not role:
+                    continue
+                
+                for member in role.members:
+                    try:
+                        # Ensure user exists in database
+                        user_data = await db.get_user(member.id)
+                        if not user_data:
+                            await db.add_user(member.id, member.name, group_name)
+                            synced += 1
+                        elif user_data.get('group') != group_name:
+                            await db.update_user_group(member.id, group_name)
+                            synced += 1
+                    except Exception as e:
+                        print(f"❌ Error syncing {member.name}: {e}")
+                        errors += 1
+            
+            embed = success_embed(
+                "Синхронізація завершена",
+                f"**Синхронізовано:** {synced} користувачів\n"
+                f"**Помилок:** {errors}"
+            )
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            print(f"❌ Error in group sync: {e}")
+            await ctx.send(embed=error_embed("Помилка", "Не вдалося синхронізувати групи."))
     
     @group_commands.command(name="stats")
     @commands.has_any_role(*MODERATION_ROLES)
@@ -476,3 +550,4 @@ class GroupsCog(commands.Cog):
 
 def setup(bot):
     bot.add_cog(GroupsCog(bot))
+

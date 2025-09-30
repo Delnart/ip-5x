@@ -14,6 +14,10 @@ class VoiceControlView(nextcord.ui.View):
     def __init__(self, channel_id: int):
         super().__init__(timeout=None)
         self.channel_id = channel_id
+        # Make buttons persistent with unique custom_ids
+        for item in self.children:
+            if hasattr(item, 'custom_id') and item.custom_id:
+                item.custom_id = f"{item.custom_id}_{channel_id}"
     
     @nextcord.ui.button(
         label="Заблокувати",
@@ -78,10 +82,13 @@ class VoiceControlView(nextcord.ui.View):
     async def _handle_voice_action(self, interaction: nextcord.Interaction, action: str):
         """Handle voice channel actions"""
         try:
+            # Defer response immediately to prevent timeout
+            await interaction.response.defer(ephemeral=True)
+            
             # Get voice channel
             voice_channel = interaction.guild.get_channel(self.channel_id)
             if not voice_channel:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=error_embed("Помилка", "Голосовий канал не знайдений!"),
                     ephemeral=True
                 )
@@ -90,7 +97,7 @@ class VoiceControlView(nextcord.ui.View):
             # Get channel data from database
             channel_data = await db.get_voice_channel(self.channel_id)
             if not channel_data:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=error_embed("Помилка", "Дані каналу не знайдені!"),
                     ephemeral=True
                 )
@@ -101,7 +108,7 @@ class VoiceControlView(nextcord.ui.View):
             is_moderator = any(role.id in MODERATION_ROLES for role in interaction.user.roles)
             
             if not (is_owner or is_moderator):
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=error_embed("Помилка доступу", "Тільки власник каналу або модератор може керувати цим каналом!"),
                     ephemeral=True
                 )
@@ -114,7 +121,7 @@ class VoiceControlView(nextcord.ui.View):
                 await voice_channel.edit(overwrites=overwrites)
                 await db.update_voice_channel(self.channel_id, {"is_locked": True})
                 
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=success_embed("Канал заблоковано", "Тепер тільки учасники каналу можуть приєднатися."),
                     ephemeral=True
                 )
@@ -127,7 +134,7 @@ class VoiceControlView(nextcord.ui.View):
                 await voice_channel.edit(overwrites=overwrites)
                 await db.update_voice_channel(self.channel_id, {"is_locked": False})
                 
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     embed=success_embed("Канал розблоковано", "Тепер усі можуть приєднатися до каналу."),
                     ephemeral=True
                 )
@@ -155,14 +162,17 @@ class VoiceControlView(nextcord.ui.View):
                     "Ви впевнені, що хочете видалити цей голосовий канал?\n"
                     "Ця дія незворотна!"
                 )
-                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
         
         except Exception as e:
             print(f"❌ Error in voice action {action}: {e}")
-            await interaction.response.send_message(
-                embed=error_embed("Помилка", "Сталася помилка при виконанні дії."),
-                ephemeral=True
-            )
+            try:
+                await interaction.followup.send(
+                    embed=error_embed("Помилка", "Сталася помилка при виконанні дії."),
+                    ephemeral=True
+                )
+            except:
+                pass
 
 class UserLimitModal(nextcord.ui.Modal):
     """Modal for setting user limit"""
@@ -368,19 +378,29 @@ class VoiceCog(commands.Cog):
     
     @commands.Cog.listener()
     async def on_ready(self):
-        """Load existing voice channels from database"""
+        """Load existing voice channels from database and restore views"""
         print("🔄 Loading voice channels...")
         
-        # Clean up any orphaned channels on startup
-        voice_category = self.bot.get_channel(CATEGORIES['VOICE'])
-        if voice_category:
-            for channel in voice_category.voice_channels:
-                if channel.id != CHANNELS['VOICE_CREATOR'] and len(channel.members) == 0:
+        # Get all active voice channels from database
+        active_channels = await db.get_all_voice_channels()
+        
+        # Restore views for existing channels
+        for channel_data in active_channels:
+            channel_id = channel_data['channel_id']
+            voice_channel = self.bot.get_channel(channel_id)
+            
+            if voice_channel and len(voice_channel.members) > 0:
+                # Channel exists and has members, restore view
+                view = VoiceControlView(channel_id)
+                self.bot.add_view(view)
+            else:
+                # Channel empty or doesn't exist, clean up
+                if voice_channel:
                     try:
-                        await channel.delete(reason="Cleanup on bot restart")
-                        await db.remove_voice_channel(channel.id)
+                        await voice_channel.delete(reason="Cleanup on bot restart")
                     except:
                         pass
+                await db.remove_voice_channel(channel_id)
         
         print("✅ Voice system loaded")
     
@@ -427,6 +447,9 @@ class VoiceCog(commands.Cog):
             view = VoiceControlView(temp_channel.id)
             
             control_message = await temp_channel.send(embed=embed, view=view)
+            
+            # Register view with bot for persistence
+            self.bot.add_view(view)
             
             # Log creation
             await self.logger.log_voice_channel_create(temp_channel, member)
