@@ -89,7 +89,7 @@ def voice_control_embed(channel_name: str, owner: nextcord.Member) -> nextcord.E
         inline=True
     )
     embed.add_field(
-        name="🚫 Видалити канал",
+        name="🗑️ Видалити канал",
         value="Видалити канал назавжди",
         inline=True
     )
@@ -98,7 +98,15 @@ def voice_control_embed(channel_name: str, owner: nextcord.Member) -> nextcord.E
 def moderation_embed(action: str, user: nextcord.Member, moderator: nextcord.Member, 
                     reason: str = None, duration: str = None) -> nextcord.Embed:
     """Create moderation action embed"""
-    embed = create_embed(f"Дія модерації: {action}")
+    action_names = {
+        "ban": "Бан",
+        "kick": "Кік",
+        "mute": "Мут",
+        "unmute": "Розмут",
+        "warn": "Попередження"
+    }
+    
+    embed = create_embed(f"Дія модерації: {action_names.get(action, action)}")
     
     embed.add_field(name="Користувач", value=f"{user.mention} ({user.name})", inline=True)
     embed.add_field(name="Модератор", value=f"{moderator.mention} ({moderator.name})", inline=True)
@@ -133,6 +141,11 @@ def user_info_embed(user: nextcord.Member, user_data: dict = None) -> nextcord.E
                 inline=True
             )
     
+    # Show roles
+    roles = [role.mention for role in user.roles if role.name != "@everyone"]
+    if roles:
+        embed.add_field(name="Ролі", value=", ".join(roles), inline=False)
+    
     embed.set_thumbnail(url=user.display_avatar.url)
     return embed
 
@@ -161,7 +174,7 @@ def help_embed() -> nextcord.Embed:
     )
     
     embed.add_field(
-        name="🛡️ Модерація",
+        name="🛡️ Модерація (Старости/Заступники)",
         value="`!ban @user [причина]` - Забанити користувача\n"
               "`!kick @user [причина]` - Викинути користувача\n"
               "`!mute @user <час> [причина]` - Заглушити користувача\n"
@@ -171,7 +184,7 @@ def help_embed() -> nextcord.Embed:
     )
     
     embed.add_field(
-        name="👥 Управління групами",
+        name="👥 Управління групами (Старости/Заступники)",
         value="`!group info <назва>` - Інформація про групу\n"
               "`!group members <назва>` - Список учасників групи\n"
               "`!group add @user <група>` - Додати до групи\n"
@@ -181,9 +194,17 @@ def help_embed() -> nextcord.Embed:
     
     embed.add_field(
         name="ℹ️ Інформація",
-        value="`!userinfo @user` - Інформація про користувача\n"
+        value="`!userinfo [@user]` - Інформація про користувача\n"
               "`!serverinfo` - Інформація про сервер\n"
+              "`!voice` - Інформація про голосовий канал\n"
               "`!help` - Показати цю довідку",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚙️ Налаштування (тільки адміни)",
+        value="`!setup_rules` - Створити повідомлення з правилами\n"
+              "`!setup_groups` - Створити повідомлення вибору груп",
         inline=False
     )
     

@@ -99,6 +99,18 @@ class Database:
         except Exception as e:
             print(f"❌ Failed to get group members for {group}: {e}")
             return []
+    
+    async def update_user_mute(self, user_id: int, mute_until: datetime) -> bool:
+        """Update user mute status"""
+        try:
+            result = self.db.users.update_one(
+                {"user_id": user_id},
+                {"$set": {"muted_until": mute_until}}
+            )
+            return True
+        except Exception as e:
+            print(f"❌ Failed to update mute for user {user_id}: {e}")
+            return False
 
     # Voice Channel Management
     async def add_voice_channel(self, channel_id: int, owner_id: int, channel_name: str) -> bool:
@@ -153,6 +165,15 @@ class Database:
     async def add_application(self, user_id: int, username: str, group: str, full_name: str) -> bool:
         """Add group application"""
         try:
+            # Check if user already has pending application
+            existing = self.db.applications.find_one({
+                "user_id": user_id,
+                "status": "pending"
+            })
+            
+            if existing:
+                return False
+            
             app_data = {
                 "user_id": user_id,
                 "username": username,

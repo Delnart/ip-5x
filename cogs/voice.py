@@ -459,29 +459,60 @@ class VoiceCog(commands.Cog):
     
     @commands.command(name="voice")
     async def voice_info(self, ctx, member: nextcord.Member = None):
-        """Get information about voice channels"""
-        if member is None:
-            member = ctx.author
-        
-        if not member.voice or not member.voice.channel:
-            await ctx.send(embed=error_embed("Помилка", "Користувач не в голосовому каналі."))
-            return
-        
-        channel_data = await db.get_voice_channel(member.voice.channel.id)
-        if not channel_data:
-            await ctx.send(embed=error_embed("Помилка", "Це не тимчасовий голосовий канал."))
-            return
-        
-        owner = ctx.guild.get_member(channel_data['owner_id'])
-        embed = info_embed(
-            "Інформація про голосовий канал",
-            f"**Назва:** {channel_data['channel_name']}\n"
-            f"**Власник:** {owner.mention if owner else 'Не знайдено'}\n"
-            f"**Створено:** <t:{int(channel_data['created_at'].timestamp())}:R>\n"
-            f"**Заблоковано:** {'Так' if channel_data['is_locked'] else 'Ні'}"
-        )
-        
-        await ctx.send(embed=embed)
+        """
+        Get information about voice channels
+        Usage: !voice [@user]
+        """
+        try:
+            target = member or ctx.author
+            
+            # Check if user is in a voice channel
+            if not target.voice or not target.voice.channel:
+                await ctx.send(
+                    embed=warning_embed(
+                        "Не в голосовому каналі",
+                        f"{target.mention} зараз не в голосовому каналі."
+                    )
+                )
+                return
+            
+            voice_channel = target.voice.channel
+            
+            # Check if it's a temporary channel
+            channel_data = await db.get_voice_channel(voice_channel.id)
+            
+            embed = create_embed(
+                f"Інформація про голосовий канал",
+                f"**Канал:** {voice_channel.name}\n"
+                f"**Користувачів:** {len(voice_channel.members)}\n"
+                f"**Ліміт:** {voice_channel.user_limit if voice_channel.user_limit > 0 else 'Немає'}"
+            )
+            
+            if channel_data:
+                owner = ctx.guild.get_member(channel_data['owner_id'])
+                embed.add_field(
+                    name="Власник",
+                    value=owner.mention if owner else "Невідомий",
+                    inline=True
+                )
+                embed.add_field(
+                    name="Статус",
+                    value="🔒 Заблоковано" if channel_data.get('is_locked') else "🔓 Відкрито",
+                    inline=True
+                )
+            
+            # List members
+            members_list = "\n".join([f"• {m.mention}" for m in voice_channel.members[:10]])
+            if len(voice_channel.members) > 10:
+                members_list += f"\n... та ще {len(voice_channel.members) - 10}"
+            
+            embed.add_field(name="Учасники", value=members_list, inline=False)
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            print(f"❌ Error in voice info: {e}")
+            await ctx.send(embed=error_embed("Помилка", "Не вдалося отримати інформацію про канал."))
 
 def setup(bot):
     bot.add_cog(VoiceCog(bot))

@@ -3,7 +3,7 @@
 # Bot Settings
 COMMAND_PREFIX = "!"
 BOT_COLOR = 0xFF69B4  # Pink-Purple color
-AXOLOTL_EMOJI = "🦎"  # Can be replaced with custom axolotl emoji
+AXOLOTL_EMOJI = "🦎"  # Axolotl emoji
 
 # Role IDs
 ROLES = {

@@ -165,7 +165,7 @@ class GroupApplicationModal(nextcord.ui.Modal):
             
             if not success:
                 await interaction.response.send_message(
-                    embed=error_embed("Помилка", "Не вдалося подати заявку. Спробуйте ще раз."),
+                    embed=error_embed("Помилка", "У вас вже є активна заявка. Зачекайте розгляду."),
                     ephemeral=True
                 )
                 return
@@ -375,9 +375,6 @@ class WelcomeCog(commands.Cog):
             
             # Log join
             await self.logger.log_user_join(member)
-            
-            # Send welcome message (optional)
-            # Could send a DM or message in general chat
             
         except Exception as e:
             print(f"❌ Error handling member join: {e}")
