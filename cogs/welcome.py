@@ -280,17 +280,27 @@ class ApplicationReviewView(nextcord.ui.View):
                 return
             
             if status == "approved":
+                # Remove other group roles first (якщо є)
+                for role_id in GROUP_ROLES.values():
+                    role = interaction.guild.get_role(role_id)
+                    if role and role in applicant.roles:
+                        await applicant.remove_roles(role, reason=f"Переміщення до {self.group}")
+                
                 # Add group role
                 group_role = interaction.guild.get_role(GROUP_ROLES[self.group])
                 if group_role:
                     await applicant.add_roles(group_role, reason=f"Заявка схвалена {interaction.user.name}")
                     
-                    # Update user group in database
-                    await db.update_user_group(self.user_id, self.group)
+                    # Ensure user exists in database, then update group
+                    user_data = await db.get_user(self.user_id)
+                    if not user_data:
+                        await db.add_user(self.user_id, applicant.name, self.group)
+                    else:
+                        await db.update_user_group(self.user_id, self.group)
                 
                 # Remove guest role
                 guest_role = interaction.guild.get_role(ROLES['GUEST'])
-                if guest_role in applicant.roles:
+                if guest_role and guest_role in applicant.roles:
                     await applicant.remove_roles(guest_role, reason="Додано до групи")
                 
                 # Send DM to user
@@ -343,10 +353,19 @@ class ApplicationReviewView(nextcord.ui.View):
             
         except Exception as e:
             print(f"❌ Error in application review: {e}")
-            await interaction.response.send_message(
-                embed=error_embed("Помилка", "Сталася помилка при розгляді заявки."),
-                ephemeral=True
-            )
+            import traceback
+            traceback.print_exc()
+            
+            try:
+                await interaction.response.send_message(
+                    embed=error_embed("Помилка", "Сталася помилка при розгляді заявки."),
+                    ephemeral=True
+                )
+            except:
+                await interaction.followup.send(
+                    embed=error_embed("Помилка", "Сталася помилка при розгляді заявки."),
+                    ephemeral=True
+                )
 
 class WelcomeCog(commands.Cog):
     """Cog for welcome system and authorization"""

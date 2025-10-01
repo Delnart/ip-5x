@@ -82,13 +82,10 @@ class VoiceControlView(nextcord.ui.View):
     async def _handle_voice_action(self, interaction: nextcord.Interaction, action: str):
         """Handle voice channel actions"""
         try:
-            # Defer response immediately to prevent timeout
-            await interaction.response.defer(ephemeral=True)
-            
             # Get voice channel
             voice_channel = interaction.guild.get_channel(self.channel_id)
             if not voice_channel:
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     embed=error_embed("Помилка", "Голосовий канал не знайдений!"),
                     ephemeral=True
                 )
@@ -97,7 +94,7 @@ class VoiceControlView(nextcord.ui.View):
             # Get channel data from database
             channel_data = await db.get_voice_channel(self.channel_id)
             if not channel_data:
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     embed=error_embed("Помилка", "Дані каналу не знайдені!"),
                     ephemeral=True
                 )
@@ -108,11 +105,30 @@ class VoiceControlView(nextcord.ui.View):
             is_moderator = any(role.id in MODERATION_ROLES for role in interaction.user.roles)
             
             if not (is_owner or is_moderator):
-                await interaction.followup.send(
+                await interaction.response.send_message(
                     embed=error_embed("Помилка доступу", "Тільки власник каналу або модератор може керувати цим каналом!"),
                     ephemeral=True
                 )
                 return
+            
+            # Handle modal actions (don't defer these)
+            if action == "limit":
+                modal = UserLimitModal(self.channel_id)
+                await interaction.response.send_modal(modal)
+                return
+            
+            elif action == "rename":
+                modal = RenameChannelModal(self.channel_id)
+                await interaction.response.send_modal(modal)
+                return
+            
+            elif action == "transfer":
+                modal = TransferOwnershipModal(self.channel_id)
+                await interaction.response.send_modal(modal)
+                return
+            
+            # For non-modal actions, defer the response
+            await interaction.response.defer(ephemeral=True)
             
             if action == "lock":
                 # Lock channel
@@ -139,21 +155,6 @@ class VoiceControlView(nextcord.ui.View):
                     ephemeral=True
                 )
             
-            elif action == "limit":
-                # Show modal for user limit
-                modal = UserLimitModal(self.channel_id)
-                await interaction.response.send_modal(modal)
-            
-            elif action == "rename":
-                # Show modal for rename
-                modal = RenameChannelModal(self.channel_id)
-                await interaction.response.send_modal(modal)
-            
-            elif action == "transfer":
-                # Show modal for ownership transfer
-                modal = TransferOwnershipModal(self.channel_id)
-                await interaction.response.send_modal(modal)
-            
             elif action == "delete":
                 # Confirm deletion
                 view = ConfirmDeleteView(self.channel_id)
@@ -167,10 +168,17 @@ class VoiceControlView(nextcord.ui.View):
         except Exception as e:
             print(f"❌ Error in voice action {action}: {e}")
             try:
-                await interaction.followup.send(
-                    embed=error_embed("Помилка", "Сталася помилка при виконанні дії."),
-                    ephemeral=True
-                )
+                # Try to send error message, handling both response types
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        embed=error_embed("Помилка", "Сталася помилка при виконанні дії."),
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        embed=error_embed("Помилка", "Сталася помилка при виконанні дії."),
+                        ephemeral=True
+                    )
             except:
                 pass
 
@@ -201,6 +209,13 @@ class UserLimitModal(nextcord.ui.Modal):
                 return
             
             voice_channel = interaction.guild.get_channel(self.channel_id)
+            if not voice_channel:
+                await interaction.response.send_message(
+                    embed=error_embed("Помилка", "Голосовий канал не знайдений!"),
+                    ephemeral=True
+                )
+                return
+            
             await voice_channel.edit(user_limit=limit)
             
             limit_text = "без ліміту" if limit == 0 else f"{limit} користувачів"
@@ -241,6 +256,13 @@ class RenameChannelModal(nextcord.ui.Modal):
         try:
             new_name = self.name_input.value.strip()
             voice_channel = interaction.guild.get_channel(self.channel_id)
+            
+            if not voice_channel:
+                await interaction.response.send_message(
+                    embed=error_embed("Помилка", "Голосовий канал не знайдений!"),
+                    ephemeral=True
+                )
+                return
             
             await voice_channel.edit(name=new_name)
             await db.update_voice_channel(self.channel_id, {"channel_name": new_name})
@@ -300,6 +322,13 @@ class TransferOwnershipModal(nextcord.ui.Modal):
             
             # Check if new owner is in the voice channel
             voice_channel = interaction.guild.get_channel(self.channel_id)
+            if not voice_channel:
+                await interaction.response.send_message(
+                    embed=error_embed("Помилка", "Голосовий канал не знайдений!"),
+                    ephemeral=True
+                )
+                return
+            
             if new_owner not in voice_channel.members:
                 await interaction.response.send_message(
                     embed=error_embed("Помилка", "Новий власник має бути в голосовому каналі!"),
@@ -339,23 +368,46 @@ class ConfirmDeleteView(nextcord.ui.View):
     )
     async def confirm_delete(self, button: nextcord.ui.Button, interaction: nextcord.Interaction):
         try:
+            # Defer immediately to prevent timeout
+            await interaction.response.defer(ephemeral=True)
+            
             voice_channel = interaction.guild.get_channel(self.channel_id)
+            
+            # Remove from database first
+            await db.remove_voice_channel(self.channel_id)
+            
+            # Then delete the channel if it exists
             if voice_channel:
                 await voice_channel.delete(reason=f"Видалено власником: {interaction.user.name}")
             
-            await db.remove_voice_channel(self.channel_id)
+            # Send confirmation (this may fail if channel is already deleted)
+            try:
+                await interaction.followup.send(
+                    embed=success_embed("Канал видалено", "Голосовий канал успішно видалено."),
+                    ephemeral=True
+                )
+            except nextcord.errors.NotFound:
+                # Channel was deleted before we could respond, which is fine
+                pass
             
-            await interaction.response.send_message(
-                embed=success_embed("Канал видалено", "Голосовий канал успішно видалено."),
-                ephemeral=True
-            )
-            
+        except nextcord.errors.NotFound:
+            # Channel already deleted or interaction expired
+            try:
+                await interaction.followup.send(
+                    embed=info_embed("Виконано", "Канал вже видалено."),
+                    ephemeral=True
+                )
+            except:
+                pass
         except Exception as e:
             print(f"❌ Error deleting channel: {e}")
-            await interaction.response.send_message(
-                embed=error_embed("Помилка", "Не вдалося видалити канал."),
-                ephemeral=True
-            )
+            try:
+                await interaction.followup.send(
+                    embed=error_embed("Помилка", "Не вдалося видалити канал."),
+                    ephemeral=True
+                )
+            except:
+                pass
     
     @nextcord.ui.button(
         label="Скасувати",
@@ -465,7 +517,7 @@ class VoiceCog(commands.Cog):
             if not channel_data:
                 return
             
-            # Remove from database
+            # Remove from database first
             await db.remove_voice_channel(channel.id)
             
             # Log deletion
@@ -475,7 +527,11 @@ class VoiceCog(commands.Cog):
             )
             
             # Delete channel
-            await channel.delete(reason="Temporary channel cleanup")
+            try:
+                await channel.delete(reason="Temporary channel cleanup")
+            except nextcord.errors.NotFound:
+                # Channel already deleted
+                pass
             
         except Exception as e:
             print(f"❌ Error deleting temp channel: {e}")

@@ -32,7 +32,14 @@ class GroupsCog(commands.Cog):
                     # User got a group role
                     new_group = next(name for name, role_id in GROUP_ROLES.items() 
                                    if role_id == after_group_roles[0].id)
-                    await db.update_user_group(after.id, new_group)
+                    
+                    # Ensure user exists in database
+                    user_data = await db.get_user(after.id)
+                    if not user_data:
+                        await db.add_user(after.id, after.name, new_group)
+                    else:
+                        await db.update_user_group(after.id, new_group)
+                    
                     print(f"✅ Auto-synced {after.name} to group {new_group}")
                 else:
                     # User lost group role
@@ -225,11 +232,14 @@ class GroupsCog(commands.Cog):
             
             # Remove guest role if exists
             guest_role = ctx.guild.get_role(ROLES['GUEST'])
-            if guest_role in member.roles:
+            if guest_role and guest_role in member.roles:
                 await member.remove_roles(guest_role, reason="Додано до групи")
             
-            # Update database
-            await db.update_user_group(member.id, group_name)
+            # Update database (ensure user exists)
+            if not user_data:
+                await db.add_user(member.id, member.name, group_name)
+            else:
+                await db.update_user_group(member.id, group_name)
             
             # Send DM to user
             try:
@@ -550,4 +560,3 @@ class GroupsCog(commands.Cog):
 
 def setup(bot):
     bot.add_cog(GroupsCog(bot))
-

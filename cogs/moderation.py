@@ -439,6 +439,42 @@ class ModerationCog(commands.Cog):
         except Exception as e:
             print(f"❌ Error in clear command: {e}")
             await ctx.send(embed=error_embed("Помилка", "Не вдалося видалити повідомлення."))
+    @commands.command(name="rules")
+    async def rules_command(self, ctx):
+        """
+        Вивести правила сервера
+        Usage: !rules
+        """
+        try:
+            rules_text = (
+                ">>> **1. Не ображай інших і не будь токсичним**\n"
+                "**2. Без NSFW, жорстокості та незаконного контенту**\n"
+                "**3. Без флуду й не спаму**\n"
+                "**4. Ніяких реклам, невідомих посилань, скаму**\n"
+                "**5. Дотримуйся адекватної поведінки у голосових та текстових каналах**\n"
+                "**6. Поважай адміністрацію та однопоточників**"
+            )
+
+            embed = nextcord.Embed(
+                title="📜 Основні правила",
+                description=rules_text,
+                color=0x57F287
+            )
+
+            embed.set_footer(
+                text="Дотримуйся правил, і все буде 🔥",
+                icon_url=ctx.guild.icon.url if ctx.guild.icon else None
+            )
+            embed.timestamp = datetime.utcnow()
+
+            # Картинка знизу
+            embed.set_image(url="https://i.ibb.co/0SHNXmH/c120944c-eb67-4768-a531-1cad771dbe80.png")
+
+            await ctx.send(embed=embed)
+
+        except Exception as e:
+            print(f"❌ Error in rules command: {e}")
+            await ctx.send(embed=error_embed("Помилка", "Не вдалося вивести правила."))
 
 def setup(bot):
     bot.add_cog(ModerationCog(bot))
